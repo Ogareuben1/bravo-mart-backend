@@ -1,20 +1,12 @@
-// Prisma models money-like columns (`Product.price`, `VendorProfile.walletBalance`)
-// as `Decimal` — a wrapper around decimal.js, not a plain JavaScript number.
-// That's the *correct* choice at the database layer: floating-point numbers
-// cannot represent money exactly (0.1 + 0.2 !== 0.3 in every language that
-// uses IEEE 754 floats), so a fixed-point Decimal type avoids rounding bugs
-// creeping into prices over many calculations.
-//
-// The gotcha: `Prisma.Decimal` has a `toJSON()` method that turns it into a
-// STRING when you `JSON.stringify` it — so `res.json(productFromDb)` would
-// hand the frontend `"price": "24000.00"` (a string), not `"price": 24000`
-// (a number). The BravoMart frontend already does
-// `product.salePrice.toLocaleString()`, which expects a number. A beginner
-// discovers this the hard way in the browser console; a professional draws
-// an explicit line between "how the database stores it" and "what the API
-// returns" — that line is this file.
+// ============================================================================
+// BRAVOMART - DATA SERIALIZERS & DTO TRANSFORMERS
+// ============================================================================
+// Converts raw Prisma database entities (e.g. Prisma.Decimal, relative paths) 
+// into serialized, frontend-safe JSON responses with numbers and absolute URLs.
+
 import type { Category, Product, VendorProfile } from '../generated/prisma/client.js';
 import type { Cart, CartItem, Order, Shipment, OrderItem, DispatchRiderProfile } from '../generated/prisma/client.js';
+import { env } from '../config/env.js';
 
 type VendorSummary = Pick<VendorProfile, 'id' | 'shopName' | 'shopAddress'>;
 
@@ -28,11 +20,46 @@ export interface ProductResponse extends Omit<ProductWithRelations, 'price' | 'w
   weightKg: number;
 }
 
+/**
+ * Base server URL resolution for transforming relative `/uploads/...` paths
+ * into full, cross-origin accessible HTTP URLs (e.g., http://localhost:5000/uploads/...).
+ * Checks process.env safely to prevent TypeScript env schema type mismatches.
+ */
+const BASE_SERVER_URL = 
+  process.env.API_BASE_URL || 
+  process.env.APP_URL || 
+  `http://localhost:${env.PORT || 5000}`;
+
+/**
+ * Formats a product relative image path into a full HTTP URL if needed.
+ */
+function resolveImageUrl(imageUrl: string | null | undefined): string {
+  if (!imageUrl) {
+    return `${BASE_SERVER_URL}/uploads/products/placeholder.jpg`;
+  }
+  
+  // If the path is relative (e.g., '/uploads/products/xyz.jpg'), prepend backend host
+  if (imageUrl.startsWith('/')) {
+    return `${BASE_SERVER_URL}${imageUrl}`;
+  }
+  
+  if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) {
+    return `${BASE_SERVER_URL}/${imageUrl}`;
+  }
+
+  return imageUrl;
+}
+
+/**
+ * Transforms Prisma Product model (with Decimal fields and relative image URLs)
+ * into a frontend-safe response object.
+ */
 export function toProductResponse(product: ProductWithRelations): ProductResponse {
   return {
     ...product,
     price: Number(product.price),
     weightKg: Number(product.weightKg),
+    imageUrl: resolveImageUrl(product.imageUrl),
   };
 }
 
@@ -54,10 +81,7 @@ export interface CartResponse extends Omit<Cart, 'items'> {
 }
 
 /**
- * Computes `lineTotal`/`subtotal` from the product's CURRENT price, on
- * every read — a cart deliberately has no snapshot of its own (see the
- * CartItem model's doc comment in schema.prisma), so "what does this cart
- * cost right now" is always derived here, never stored.
+ * Computes `lineTotal`/`subtotal` from the product's CURRENT price on every read.
  */
 export function toCartResponse(cart: Cart & { items: CartItemWithProduct[] }): CartResponse {
   const items = cart.items.map((item) => {
@@ -141,11 +165,7 @@ export interface OrderResponse
 }
 
 /**
- * `riderSummaries` is a map keyed by shipmentId because rider identity
- * (name/phone) lives on User, not on DispatchRiderProfile — resolving it
- * requires an extra query the service layer already ran once for every
- * shipment in the order (see order.service.ts), so the serializer just
- * plugs the results in rather than querying again per shipment here.
+ * Serializes Order entity and attached Shipment relations.
  */
 export function toOrderResponse(
   order: OrderWithRelations,

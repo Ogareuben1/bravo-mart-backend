@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config(); // Ensure .env is loaded before importing config modules
+
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { connectDatabase, disconnectDatabase } from './config/prisma.js';
@@ -13,15 +16,6 @@ async function bootstrap(): Promise<void> {
     logger.info(`BravoMart API listening on port ${env.PORT} (${env.NODE_ENV})`);
   });
 
-  /**
-   * Graceful shutdown: on SIGINT/SIGTERM (Ctrl+C locally, or what
-   * container platforms send before killing a pod), stop accepting new
-   * connections, let in-flight requests finish, THEN close the database
-   * and Redis connections, THEN exit. Skipping this and just letting the
-   * process die means requests mid-flight get dropped and connections are
-   * closed uncleanly — fine on a laptop, a real source of dropped requests
-   * during every deploy in production.
-   */
   const shutdown = async (signal: string): Promise<void> => {
     logger.info(`Received ${signal}. Shutting down gracefully...`);
 
