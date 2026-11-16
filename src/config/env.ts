@@ -9,13 +9,25 @@
 import 'dotenv/config';
 import { z } from 'zod';
 
+const singleUrlSchema = z.url();
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().positive().default(4000),
+  PORT: z.coerce.number().int().positive().default(8080),
 
-  CORS_ORIGIN: z.url({ error: 'CORS_ORIGIN must be a valid URL, e.g. http://localhost:5173' }).default(
-    'http://localhost:5173',
-  ),
+  // Supports a single URL or comma-separated URLs (e.g. "https://bravomart.web.app,http://localhost:5173")
+  CORS_ORIGIN: z
+    .string()
+    .default('http://localhost:5173')
+    .refine(
+      (val) =>
+        val
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .every((item) => singleUrlSchema.safeParse(item).success),
+      { error: 'CORS_ORIGIN must contain valid URL(s), e.g. https://bravomart.web.app,http://localhost:5173' },
+    ),
   COOKIE_DOMAIN: z.string().trim().optional(),
 
   DATABASE_URL: z.string().min(1, { error: 'DATABASE_URL is required.' }),
@@ -34,6 +46,8 @@ const envSchema = z.object({
 
   GEMINI_API_KEY: z.string().min(1, { error: 'GEMINI_API_KEY is required.' }),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
+  GOOGLE_CLOUD_PROJECT: z.string().trim().optional(),
+  GOOGLE_CLOUD_LOCATION: z.string().trim().default('us-central1'),
 
   UPLOAD_DIR: z.string().default('uploads'),
   MAX_UPLOAD_SIZE_MB: z.coerce.number().int().positive().default(5),

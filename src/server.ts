@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-dotenv.config(); // Ensure .env is loaded before importing config modules
+dotenv.config(); // Loads local .env in development; Cloud Run injects env vars directly
 
 import { createApp } from './app.js';
 import { env } from './config/env.js';
@@ -12,24 +12,48 @@ async function bootstrap(): Promise<void> {
 
   const app = createApp();
 
-  const server = app.listen(env.PORT, () => {
-    logger.info(`BravoMart API listening on port ${env.PORT} (${env.NODE_ENV})`);
+  // Cloud Run injects PORT (default 8080) and requires binding to 0.0.0.0
+  const port = Number(process.env.PORT) || env.PORT || 8080;
+  const host = '0.0.0.0';
+
+  const server = app.listen(port, host, () => {
+    logger.info(`BravoMart API listening on http://${host}:${port} (${env.NODE_ENV})`);
   });
 
-  const shutdown = async (signal: string): Promise<void> => {
+  let isShuttingDown = false;
+
+  const shutdown = (signal: string): void => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
     logger.info(`Received ${signal}. Shutting down gracefully...`);
+
+    // Cloud Run allows 10s after SIGTERM before SIGKILL; force exit at 8s if cleanup hangs
+    const forceExitTimer = setTimeout(() => {
+      logger.error('Graceful shutdown timed out. Forcing exit.');
+      process.exit(1);
+    }, 8000);
+    forceExitTimer.unref();
 
     server.close(() => {
       void (async () => {
-        await disconnectDatabase();
-        redis.disconnect();
-        process.exit(0);
+        try {
+          await disconnectDatabase();
+          if (redis && typeof redis.disconnect === 'function') {
+            redis.disconnect();
+          }
+          logger.info('Database and Redis disconnected. Exiting.');
+          process.exit(0);
+        } catch (err) {
+          logger.error('Error during shutdown cleanup', err);
+          process.exit(1);
+        }
       })();
     });
   };
 
-  process.on('SIGINT', () => void shutdown('SIGINT'));
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 bootstrap().catch((error: unknown) => {

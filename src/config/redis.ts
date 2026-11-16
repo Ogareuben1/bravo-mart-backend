@@ -11,33 +11,35 @@ import { logger } from '../utils/logger.js';
  * 1. Session Store — Stores refresh tokens for fast O(1) lookups during authentication.
  * 2. Caching Layer — Cache-aside implementation for product and category catalog queries.
  *
- * Upstash Redis / Cloud Handling:
- * Cloud Redis providers automatically drop idle TLS sockets after period of inactivity.
- * This configuration enables TCP KeepAlive and continuous reconnection strategies to
- * prevent "Connection is closed" errors during user login / API calls.
+ * Cloud Run & Upstash Redis Handling:
+ * Cloud Run freezes container CPU between requests, and Upstash drops idle TLS sockets.
+ * TCP KeepAlive + capped backoff ensures sockets recover cleanly on incoming requests.
  */
+
+const isTls = env.REDIS_URL.startsWith('rediss://');
 
 export const redis = new Redis(env.REDIS_URL, {
   // 1. Enable TLS for secure Upstash connections (`rediss://...`)
-  tls: env.REDIS_URL.startsWith('rediss://') ? {} : undefined,
+  tls: isTls ? { rejectUnauthorized: false } : undefined,
 
-  // 2. Set maxRetriesPerRequest to null so ioredis waits and retries commands
-  // instead of throwing an instant "Connection is closed" exception.
+  // 2. Wait and retry commands instead of throwing instant "Connection is closed" errors
   maxRetriesPerRequest: null,
 
-  // 3. KeepAlive sends TCP ping frames every 10 seconds to keep the Upstash socket open.
+  // 3. KeepAlive sends TCP ping frames every 10 seconds to keep the Upstash socket open
   keepAlive: 10000,
 
-  // 4. Disable ready checks to avoid unnecessary commands on initial socket connection.
+  // 4. Disable ready checks to avoid unnecessary commands on initial socket connection
   enableReadyCheck: false,
+
+  // 5. Connect cleanly when ready rather than blocking initial module load
+  lazyConnect: false,
 
   /**
    * Resilient Exponential Backoff Retry Strategy.
-   * Instead of stopping after 5 attempts (which leaves the app permanently broken),
-   * this strategy continuously retries with a capped max delay of 3 seconds.
+   * Backs off up to 15 seconds so transient drops recover quickly without flooding logs.
    */
-  retryStrategy(times: number) {
-    const delay = Math.min(times * 100, 3000);
+  retryStrategy(times: number): number {
+    const delay = Math.min(times * 250, 15000);
     logger.warn(`Redis disconnected. Reconnecting... (Attempt ${times}, waiting ${delay}ms)`);
     return delay;
   },

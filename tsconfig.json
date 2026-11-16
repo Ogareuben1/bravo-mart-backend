@@ -10,10 +10,7 @@
     "rootDir": "src",
     "outDir": "dist",
 
-    /* Strict mode: this is the whole "TypeScript (Strict Mode)" requirement.
-       `strict: true` alone turns on strictNullChecks, noImplicitAny,
-       strictFunctionTypes, strictBindCallApply, strictPropertyInitialization,
-       noImplicitThis, alwaysStrict and useUnknownInCatchVariables together. */
+    /* Strict mode */
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
@@ -32,5 +29,5 @@
     "removeComments": false
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/generated"]
+  "exclude": ["node_modules", "dist"]
 }
