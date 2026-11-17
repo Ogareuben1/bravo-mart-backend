@@ -1,20 +1,15 @@
 // ============================================================================
 // BRAVOMART - UPLOAD & STORAGE SERVICE
 // ============================================================================
-// Where an uploaded image buffer actually ends up. Today that's the local
-// filesystem, served back out by `express.static` in app.ts — fine for a
-// single-server deployment or local development. 
-//
-// The moment you deploy to more than one server instance (or anywhere with an 
-// ephemeral filesystem like Render or Railway), local disk storage stops working.
-// This function is the ONLY place in the codebase that knows *where* files
-// are stored. Swapping to S3/Cloudinary/GCS later means rewriting the body
-// of `persistImageBuffer` to `client.upload(buffer).then(r => r.url)`.
+// Persists uploaded and AI-generated image buffers to Cloudinary in production
+// so assets survive Render redeploys/sleep cycles, with an automatic fallback
+// to local disk when Cloudinary credentials are not configured.
 
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile, access } from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
+import { uploadBufferToCloudinary } from '../utils/cloudinary.js';
 
 /** Supported image extensions by MIME type. */
 const EXTENSION_BY_MIME: Record<string, string> = {
@@ -28,25 +23,41 @@ const EXTENSION_BY_MIME: Record<string, string> = {
 };
 
 export interface StoredFile {
-  /** Public, web-servable URL path (e.g. "/uploads/products/<uuid>.jpg"). */
+  /** Public, web-servable URL (Cloudinary HTTPS URL or local "/uploads/..." path). */
   url: string;
-  /** Absolute system path where the file is written locally. */
+  /** Absolute system path where the file is written locally (empty string for Cloudinary). */
   absolutePath: string;
 }
 
+const isCloudinaryConfigured = (): boolean =>
+  Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+      process.env.CLOUDINARY_API_KEY &&
+      process.env.CLOUDINARY_API_SECRET
+  );
+
 /**
- * Takes a raw Buffer, saves it inside the configured upload directory, 
- * and returns the public relative URL and absolute system path.
+ * Takes a raw Buffer, uploads it to Cloudinary (or saves locally if Cloudinary
+ * isn't configured), and returns the public URL.
  *
  * @param buffer - File content stored in memory
  * @param mimeType - File MIME type (e.g. 'image/jpeg')
- * @param subfolder - Subdirectory under UPLOAD_DIR (e.g. 'products', 'kyc')
+ * @param subfolder - Subdirectory / Cloudinary folder suffix (e.g. 'products', 'kyc')
  */
 export async function persistImageBuffer(
   buffer: Buffer,
   mimeType: string,
   subfolder: string
 ): Promise<StoredFile> {
+  if (isCloudinaryConfigured()) {
+    const secureUrl = await uploadBufferToCloudinary(buffer, `bravomart/${subfolder}`);
+    return {
+      url: secureUrl,
+      absolutePath: '',
+    };
+  }
+
+  // Local disk fallback for offline development
   const extension = EXTENSION_BY_MIME[mimeType] ?? 'jpg';
   const filename = `${randomUUID()}.${extension}`;
 
@@ -74,10 +85,8 @@ export async function ensurePlaceholderImage(subfolder: string = 'products'): Pr
   const publicUrl = `/${env.UPLOAD_DIR}/${subfolder}/placeholder.jpg`;
 
   try {
-    // Check if placeholder image already exists
     await access(placeholderPath);
   } catch {
-    // Create a 1x1 transparent/grey placeholder pixel if missing
     const defaultBuffer = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
       'base64'
