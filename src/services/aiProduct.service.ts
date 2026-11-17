@@ -145,15 +145,15 @@ export async function generateListingFromPrompt(input: GenerateListingInput): Pr
 
 /**
  * Generates an e-commerce studio photo using Gemini native image generation
- * (Nano Banana models) when no initial image is uploaded by the vendor.
+ * models when no initial image is uploaded by the vendor.
  */
 export async function generateAiProductImage(title: string, description: string): Promise<string> {
-  const imagePrompt = `Professional e-commerce product photo of ${title}. Description: ${description}. Clean white background, studio lighting, high resolution product shot.`;
+  const imagePrompt = `Generate a clean, studio-lit e-commerce product photograph of ${title}. ${description}. Isolated on a pure white studio background, sharp focus, commercial product photography.`;
 
   const imageModels = [
-    'gemini-nano-banana-2.1',
     'gemini-3.1-flash-lite-image',
     'gemini-3.1-flash-image',
+    'gemini-2.5-flash-image',
   ];
 
   for (const modelName of imageModels) {
@@ -162,7 +162,7 @@ export async function generateAiProductImage(title: string, description: string)
         model: modelName,
         contents: imagePrompt,
         config: {
-          responseModalities: ['IMAGE'],
+          responseModalities: ['TEXT', 'IMAGE'],
           imageConfig: {
             aspectRatio: '1:1',
           },
@@ -173,17 +173,18 @@ export async function generateAiProductImage(title: string, description: string)
       const imagePart = parts.find((part) => part.inlineData?.data);
 
       if (!imagePart?.inlineData?.data) {
-        throw new Error(`No image bytes returned from ${modelName}.`);
+        throw new Error(`No inline image bytes returned from ${modelName}.`);
       }
 
       const mimeType = imagePart.inlineData.mimeType || 'image/png';
       const imageBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
       const stored = await persistImageBuffer(imageBuffer, mimeType, 'products');
+      console.log(`[AI Image Generation] Success with ${modelName} -> ${stored.url}`);
       return stored.url;
-    } catch (error) {
-      console.warn(
-        `[AI Image Generation] Model ${modelName} failed:`,
-        error instanceof Error ? error.message : error
+    } catch (error: any) {
+      console.error(
+        `[AI Image Generation] Model ${modelName} failed (status=${error?.status || error?.code || 'unknown'}):`,
+        error?.message || error
       );
     }
   }
